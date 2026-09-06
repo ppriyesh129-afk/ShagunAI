@@ -22,7 +22,12 @@ class MainActivity : AppCompatActivity() {
                 selectedVideoUri = uri
                 videoPreview.setVideoURI(uri)
                 videoPreview.seekTo(100)
-                Toast.makeText(this, "Video selected successfully", Toast.LENGTH_SHORT).show()
+
+                Toast.makeText(
+                    this,
+                    "Video selected successfully",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
         }
 
@@ -47,30 +52,51 @@ class MainActivity : AppCompatActivity() {
         process.setOnClickListener {
 
             if (selectedVideoUri == null) {
-                Toast.makeText(this, "Please upload a video first", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    this,
+                    "Please upload a video first",
+                    Toast.LENGTH_SHORT
+                ).show()
                 return@setOnClickListener
             }
 
             if (selectedBindiUri == null) {
-                Toast.makeText(this, "Please choose a bindi first", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    this,
+                    "Please choose a bindi first",
+                    Toast.LENGTH_SHORT
+                ).show()
                 return@setOnClickListener
             }
 
-            Toast.makeText(this, "Video and bindi ready", Toast.LENGTH_LONG).show()
+            Toast.makeText(
+                this,
+                "Video and Bindi ready",
+                Toast.LENGTH_LONG
+            ).show()
+
+            // Next phase:
+            // Face Detection → Forehead Tracking → Realistic Bindi Rendering
         }
     }
 
     private fun showBindiGrid() {
 
-        val files = assets.list("bindi")?.filter { it.endsWith(".png") } ?: return
+        val files = assets.list("bindi")
+            ?.filter { it.endsWith(".png") }
+            ?.sorted()
+            ?: return
 
         val dialog = Dialog(this)
+        dialog.setTitle("Choose Bindi")
+
         val grid = GridView(this)
 
         grid.numColumns = 4
         grid.verticalSpacing = 20
         grid.horizontalSpacing = 20
         grid.stretchMode = GridView.STRETCH_COLUMN_WIDTH
+        grid.setPadding(20, 20, 20, 20)
 
         grid.adapter = object : BaseAdapter() {
 
@@ -80,15 +106,27 @@ class MainActivity : AppCompatActivity() {
 
             override fun getItemId(position: Int) = position.toLong()
 
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            override fun getView(
+                position: Int,
+                convertView: View?,
+                parent: ViewGroup
+            ): View {
 
-                val image = (convertView as? ImageView) ?: ImageView(this@MainActivity)
+                val image = (convertView as? ImageView)
+                    ?: ImageView(this@MainActivity)
 
-                image.layoutParams = GridView.LayoutParams(150, 150)
+                image.layoutParams =
+                    GridView.LayoutParams(170, 170)
+
                 image.scaleType = ImageView.ScaleType.FIT_CENTER
 
-                val input = assets.open("bindi/${files[position]}")
-                image.setImageBitmap(BitmapFactory.decodeStream(input))
+                val input =
+                    assets.open("bindi/${files[position]}")
+
+                image.setImageBitmap(
+                    BitmapFactory.decodeStream(input)
+                )
+
                 input.close()
 
                 return image
@@ -96,8 +134,17 @@ class MainActivity : AppCompatActivity() {
         }
 
         grid.setOnItemClickListener { _, _, position, _ ->
-            selectedBindiUri = Uri.parse("file:///android_asset/bindi/${files[position]}")
-            Toast.makeText(this, "Selected: ${files[position]}", Toast.LENGTH_SHORT).show()
+
+            selectedBindiUri = Uri.parse(
+                "file:///android_asset/bindi/${files[position]}"
+            )
+
+            Toast.makeText(
+                this,
+                "Selected: ${files[position]}",
+                Toast.LENGTH_SHORT
+            ).show()
+
             dialog.dismiss()
         }
 
