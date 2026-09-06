@@ -1,4 +1,4 @@
-name: Build shagunai
+name: Build ShagunAI
 
 on:
   workflow_dispatch:
