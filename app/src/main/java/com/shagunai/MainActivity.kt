@@ -1,4 +1,4 @@
-package com.shagunai
+package com.ShagunAI
 
 import android.app.Dialog
 import android.graphics.BitmapFactory
