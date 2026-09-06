@@ -1,4 +1,4 @@
-name: Build ShagunAI
+name: Build shagunai
 
 on:
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: "8.9"
 
       - name: Download AI Models
         run: |
@@ -44,6 +44,7 @@ jobs:
           wget -O app/src/main/assets/models/face_detection_short_range.onnx \
             https://github.com/yakhyo/mediapipe-face-mesh-onnx/releases/download/weights/face_detection_short_range.onnx
 
+          echo "Downloaded models:"
           ls -lh app/src/main/assets/models/
 
       - name: Build APK
