@@ -4,6 +4,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.widget.Button
 import android.widget.Toast
+import android.widget.VideoView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 
@@ -11,14 +12,14 @@ class MainActivity : AppCompatActivity() {
 
     private var selectedVideoUri: Uri? = null
     private var selectedBindiUri: Uri? = null
+    private lateinit var videoPreview: VideoView
 
     private val videoPicker =
-        registerForActivityResult(
-            ActivityResultContracts.GetContent()
-        ) { uri: Uri? ->
-
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
             if (uri != null) {
                 selectedVideoUri = uri
+                videoPreview.setVideoURI(uri)
+                videoPreview.seekTo(100)
 
                 Toast.makeText(
                     this,
@@ -29,10 +30,7 @@ class MainActivity : AppCompatActivity() {
         }
 
     private val bindiPicker =
-        registerForActivityResult(
-            ActivityResultContracts.GetContent()
-        ) { uri: Uri? ->
-
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
             if (uri != null) {
                 selectedBindiUri = uri
 
@@ -46,93 +44,35 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         setContentView(R.layout.activity_main)
+
+        videoPreview = findViewById(R.id.videoPreview)
 
         val upload = findViewById<Button>(R.id.btnUpload)
         val bindi = findViewById<Button>(R.id.btnBindi)
         val process = findViewById<Button>(R.id.btnProcess)
 
-        // -----------------------------
-        // UPLOAD VIDEO
-        // -----------------------------
-
         upload.setOnClickListener {
-
             videoPicker.launch("video/*")
         }
 
-        // -----------------------------
-        // CHOOSE BINDI
-        // -----------------------------
-
         bindi.setOnClickListener {
-
             bindiPicker.launch("image/*")
         }
 
-        // -----------------------------
-        // PROCESS VIDEO
-        // -----------------------------
-
         process.setOnClickListener {
 
-            val video = selectedVideoUri
-            val bindiImage = selectedBindiUri
-
-            if (video == null) {
-
-                Toast.makeText(
-                    this,
-                    "Please upload a video first",
-                    Toast.LENGTH_SHORT
-                ).show()
-
+            if (selectedVideoUri == null) {
+                Toast.makeText(this, "Please upload a video first", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
-            if (bindiImage == null) {
-
-                Toast.makeText(
-                    this,
-                    "Please choose a bindi first",
-                    Toast.LENGTH_SHORT
-                ).show()
-
+            if (selectedBindiUri == null) {
+                Toast.makeText(this, "Please choose a bindi first", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
 
-            Toast.makeText(
-                this,
-                "Video and bindi ready",
-                Toast.LENGTH_LONG
-            ).show()
-
-            /*
-             * PHASE 2 PROCESSING PIPELINE
-             *
-             * Video
-             *   ↓
-             * Extract video frames
-             *   ↓
-             * Detect face
-             *   ↓
-             * Track face
-             *   ↓
-             * Calculate forehead position
-             *   ↓
-             * Place Bindi
-             *   ↓
-             * Track Sindoor region
-             *   ↓
-             * Track Mangalsutra region
-             *   ↓
-             * Render frames
-             *   ↓
-             * Encode MP4
-             *   ↓
-             * Save output video
-             */
+            Toast.makeText(this, "Video and bindi ready", Toast.LENGTH_LONG).show()
         }
     }
 }
