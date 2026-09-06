@@ -1,10 +1,12 @@
 package com.shagunai
 
+import android.app.Dialog
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
-import android.widget.Button
-import android.widget.Toast
-import android.widget.VideoView
+import android.view.View
+import android.view.ViewGroup
+import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 
@@ -15,30 +17,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var videoPreview: VideoView
 
     private val videoPicker =
-        registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
             if (uri != null) {
                 selectedVideoUri = uri
                 videoPreview.setVideoURI(uri)
                 videoPreview.seekTo(100)
-
-                Toast.makeText(
-                    this,
-                    "Video selected successfully",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-        }
-
-    private val bindiPicker =
-        registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-            if (uri != null) {
-                selectedBindiUri = uri
-
-                Toast.makeText(
-                    this,
-                    "Bindi selected successfully",
-                    Toast.LENGTH_SHORT
-                ).show()
+                Toast.makeText(this, "Video selected successfully", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -57,7 +41,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         bindi.setOnClickListener {
-            bindiPicker.launch("image/*")
+            showBindiGrid()
         }
 
         process.setOnClickListener {
@@ -74,5 +58,50 @@ class MainActivity : AppCompatActivity() {
 
             Toast.makeText(this, "Video and bindi ready", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun showBindiGrid() {
+
+        val files = assets.list("bindi")?.filter { it.endsWith(".png") } ?: return
+
+        val dialog = Dialog(this)
+        val grid = GridView(this)
+
+        grid.numColumns = 4
+        grid.verticalSpacing = 20
+        grid.horizontalSpacing = 20
+        grid.stretchMode = GridView.STRETCH_COLUMN_WIDTH
+
+        grid.adapter = object : BaseAdapter() {
+
+            override fun getCount() = files.size
+
+            override fun getItem(position: Int) = files[position]
+
+            override fun getItemId(position: Int) = position.toLong()
+
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+
+                val image = (convertView as? ImageView) ?: ImageView(this@MainActivity)
+
+                image.layoutParams = GridView.LayoutParams(150, 150)
+                image.scaleType = ImageView.ScaleType.FIT_CENTER
+
+                val input = assets.open("bindi/${files[position]}")
+                image.setImageBitmap(BitmapFactory.decodeStream(input))
+                input.close()
+
+                return image
+            }
+        }
+
+        grid.setOnItemClickListener { _, _, position, _ ->
+            selectedBindiUri = Uri.parse("file:///android_asset/bindi/${files[position]}")
+            Toast.makeText(this, "Selected: ${files[position]}", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+        }
+
+        dialog.setContentView(grid)
+        dialog.show()
     }
 }
