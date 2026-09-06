@@ -59,11 +59,17 @@ dependencies {
     implementation "androidx.activity:activity-ktx:1.9.2"
     implementation "androidx.constraintlayout:constraintlayout:2.1.4"
 
-    // ONNX Runtime
-    implementation "com.microsoft.onnxruntime:onnxruntime-android:1.19.2"
+    // AI Runtime
+    implementation "com.microsoft.onnxruntime:onnxruntime-android:1.22.0"
 
-    // Video processing
+    // OpenCV (image processing & blending)
+    implementation "org.opencv:opencv:4.10.0"
+
+    // Video Processing
     implementation "androidx.media3:media3-transformer:1.4.1"
     implementation "androidx.media3:media3-effect:1.4.1"
     implementation "androidx.media3:media3-common:1.4.1"
+
+    // EXIF support
+    implementation "androidx.exifinterface:exifinterface:1.3.7"
 }
