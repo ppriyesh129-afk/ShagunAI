@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
+import android.widget.AbsListView
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.GridView
@@ -50,6 +51,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         process.setOnClickListener {
+
             if (selectedVideoUri == null) {
                 Toast.makeText(this, "Please upload a video first", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
@@ -72,12 +74,15 @@ class MainActivity : AppCompatActivity() {
             ?: return
 
         val dialog = Dialog(this)
+        dialog.setTitle("Choose Bindi")
+
         val grid = GridView(this)
 
         grid.numColumns = 4
         grid.verticalSpacing = 20
         grid.horizontalSpacing = 20
         grid.stretchMode = GridView.STRETCH_COLUMN_WIDTH
+        grid.setPadding(20, 20, 20, 20)
 
         grid.adapter = object : BaseAdapter() {
 
@@ -93,9 +98,10 @@ class MainActivity : AppCompatActivity() {
                 parent: ViewGroup
             ): View {
 
-                val image = (convertView as? ImageView) ?: ImageView(this@MainActivity)
+                val image = (convertView as? ImageView)
+                    ?: ImageView(this@MainActivity)
 
-                image.layoutParams = GridView.LayoutParams(170, 170)
+                image.layoutParams = AbsListView.LayoutParams(170, 170)
                 image.scaleType = ImageView.ScaleType.FIT_CENTER
 
                 val input = assets.open("bindi/${files[position]}")
@@ -107,8 +113,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         grid.setOnItemClickListener { _, _, position, _ ->
+
             selectedBindiUri = Uri.parse("file:///android_asset/bindi/${files[position]}")
-            Toast.makeText(this, "Selected: ${files[position]}", Toast.LENGTH_SHORT).show()
+
+            Toast.makeText(
+                this,
+                "Selected: ${files[position]}",
+                Toast.LENGTH_SHORT
+            ).show()
+
             dialog.dismiss()
         }
 
