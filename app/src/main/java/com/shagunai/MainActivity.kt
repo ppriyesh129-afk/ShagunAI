@@ -118,6 +118,7 @@ class MainActivity : AppCompatActivity() {
                 
                 // ✅ FIX: Assign the fully created object to the reference
                 processorRef = processor
+                BindiRenderer.resetSmoothing() // ✅ Reset smoothing for new video
                 processor.process()
             }
         }
