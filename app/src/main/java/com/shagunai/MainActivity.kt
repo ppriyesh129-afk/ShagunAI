@@ -2,7 +2,6 @@ package com.shagunai
 
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
-import ai.onnxruntime.TensorInfo
 import android.app.Dialog
 import android.content.ContentValues
 import android.graphics.Bitmap
@@ -32,6 +31,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.atan2
+import kotlin.math.hypot
 
 class MainActivity : AppCompatActivity() {
 
@@ -39,10 +40,11 @@ class MainActivity : AppCompatActivity() {
     private var selectedBindiFileName: String? = null
     private lateinit var videoPreview: VideoView
     private lateinit var processedImageView: ImageView
-    private lateinit var tvModelInfo: TextView // NEW: For on-screen debugging
+    private lateinit var tvModelInfo: TextView
 
     private lateinit var ortEnv: OrtEnvironment
     private lateinit var ortSession: OrtSession
+    private lateinit var faceDetector: FaceDetector
 
     private val videoPicker =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -60,18 +62,13 @@ class MainActivity : AppCompatActivity() {
 
         videoPreview = findViewById(R.id.videoPreview)
         processedImageView = findViewById(R.id.processedImage)
-        tvModelInfo = findViewById(R.id.tvModelInfo) // Initialize Text View
+        tvModelInfo = findViewById(R.id.tvModelInfo)
 
         initOnnxModel()
 
-        val upload = findViewById<Button>(R.id.btnUpload)
-        val bindi = findViewById<Button>(R.id.btnBindi)
-        val process = findViewById<Button>(R.id.btnProcess)
-
-        upload.setOnClickListener { videoPicker.launch("video/*") }
-        bindi.setOnClickListener { showBindiGrid() }
-
-        process.setOnClickListener {
+        findViewById<Button>(R.id.btnUpload).setOnClickListener { videoPicker.launch("video/*") }
+        findViewById<Button>(R.id.btnBindi).setOnClickListener { showBindiGrid() }
+        findViewById<Button>(R.id.btnProcess).setOnClickListener {
             if (selectedVideoUri == null) {
                 Toast.makeText(this, "Please upload a video first", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
@@ -80,11 +77,8 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Please choose a bindi first", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-
             Toast.makeText(this, "Processing started...", Toast.LENGTH_SHORT).show()
-            CoroutineScope(Dispatchers.IO).launch {
-                processVideoFrame()
-            }
+            CoroutineScope(Dispatchers.IO).launch { processVideoFrame() }
         }
     }
 
@@ -92,81 +86,88 @@ class MainActivity : AppCompatActivity() {
         try {
             ortEnv = OrtEnvironment.getEnvironment()
             val modelBytes = assets.open("models/face_detection_short_range.onnx").use { it.readBytes() }
-            val sessionOptions = OrtSession.SessionOptions()
-            ortSession = ortEnv.createSession(modelBytes, sessionOptions)
-            
-            // Print the model info directly to the screen!
-            tvModelInfo.text = "✅ AI Model Loaded!\n\n" + getModelInfoString()
-            
+            ortSession = ortEnv.createSession(modelBytes, OrtSession.SessionOptions())
+            faceDetector = FaceDetector(ortEnv, ortSession)
+            tvModelInfo.text = "✅ AI Model Loaded!\nBlazeFace short-range ready.\nSelect video + bindi, then Process."
         } catch (e: Exception) {
-            Log.e("ShagunAI_ONNX", "❌ Failed to load ONNX model", e)
+            Log.e("ShagunAI_ONNX", "Failed to load ONNX model", e)
             tvModelInfo.text = "❌ Failed to load model: ${e.message}"
         }
-    }
-
-    // This creates the text that will show on your screen
-    private fun getModelInfoString(): String {
-        val sb = StringBuilder()
-        sb.append("--- INPUTS ---\n")
-        for ((name, nodeInfo) in ortSession.inputInfo) {
-            val info = nodeInfo.info
-            if (info is TensorInfo) {
-                sb.append("Name: \"$name\"\n")
-                sb.append("Shape: [${info.shape.joinToString()}]\n\n")
-            }
-        }
-        sb.append("--- OUTPUTS ---\n")
-        for ((name, nodeInfo) in ortSession.outputInfo) {
-            val info = nodeInfo.info
-            if (info is TensorInfo) {
-                sb.append("Name: \"$name\"\n")
-                sb.append("Shape: [${info.shape.joinToString()}]\n\n")
-            }
-        }
-        return sb.toString()
     }
 
     private suspend fun processVideoFrame() {
         try {
             val retriever = MediaMetadataRetriever()
             retriever.setDataSource(this, selectedVideoUri)
-            val originalFrame: Bitmap? = retriever.getFrameAtTime(1000000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            val originalFrame = retriever.getFrameAtTime(1000000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
             retriever.release()
 
-            if (originalFrame == null) {
-                showToast("Failed to extract frame.")
+            if (originalFrame == null) { showToast("Failed to extract frame."); return }
+
+            val bindiBitmap = assets.open("bindi/$selectedBindiFileName").use {
+                BitmapFactory.decodeStream(it)
+            } ?: return
+
+            // 🤖 RUN THE AI ON THE FRAME
+            val detection = faceDetector.detect(originalFrame)
+
+            if (detection == null) {
+                withContext(Dispatchers.Main) {
+                    tvModelInfo.text = "❌ NO FACE detected in this frame.\nTry a video where the face is clear & front-facing."
+                }
+                showToast("No face detected!")
                 return
             }
-
-            val bindiBitmap = assets.open("bindi/$selectedBindiFileName").use { inputStream ->
-                BitmapFactory.decodeStream(inputStream)
-            } ?: return
 
             val mutableFrame = originalFrame.copy(Bitmap.Config.ARGB_8888, true)
             val canvas = Canvas(mutableFrame)
             val paint = Paint()
 
-            val bindiWidth = mutableFrame.width / 8
+            // 🎯 COMPUTE BINDI POSITION FROM EYE + NOSE KEYPOINTS
+            val eyeR = detection.keypoints[0]
+            val eyeL = detection.keypoints[1]
+            val nose = detection.keypoints[2]
+
+            val eyeMidX = (eyeR[0] + eyeL[0]) / 2f
+            val eyeMidY = (eyeR[1] + eyeL[1]) / 2f
+            val dirX = eyeMidX - nose[0]   // vector pointing "up" the face
+            val dirY = eyeMidY - nose[1]
+
+            val centerX = eyeMidX + dirX * 0.65f   // forehead spot
+            val centerY = eyeMidY + dirY * 0.65f
+
+            val eyeDist = hypot((eyeL[0] - eyeR[0]).toDouble(), (eyeL[1] - eyeR[1]).toDouble()).toFloat()
+            val bindiWidth = (eyeDist * 0.55f).toInt().coerceIn(24, mutableFrame.width / 3)
             val bindiHeight = (bindiWidth.toFloat() / bindiBitmap.width * bindiBitmap.height).toInt()
             val scaledBindi = Bitmap.createScaledBitmap(bindiBitmap, bindiWidth, bindiHeight, true)
 
-            val xPos = (mutableFrame.width - bindiWidth) / 2
-            val yPos = mutableFrame.height / 4 
+            // Rotate bindi to match head tilt
+            val angle = Math.toDegrees(atan2((eyeL[1] - eyeR[1]).toDouble(), (eyeL[0] - eyeR[0]).toDouble())).toFloat()
 
-            canvas.drawBitmap(scaledBindi, xPos.toFloat(), yPos.toFloat(), paint)
+            canvas.save()
+            canvas.rotate(angle, centerX, centerY)
+            canvas.drawBitmap(scaledBindi, centerX - bindiWidth / 2f, centerY - bindiHeight / 2f, paint)
+            canvas.restore()
 
-            paint.color = Color.RED
+            // 🟩 DEBUG: draw face box (green) + keypoints (yellow)
+            paint.color = Color.GREEN
             paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 5f
-            canvas.drawRect(xPos.toFloat(), yPos.toFloat(), (xPos + bindiWidth).toFloat(), (yPos + bindiHeight).toFloat(), paint)
+            paint.strokeWidth = 4f
+            canvas.drawRect(detection.x1, detection.y1, detection.x2, detection.y2, paint)
+            paint.style = Paint.Style.FILL
+            paint.color = Color.YELLOW
+            for (kp in detection.keypoints) canvas.drawCircle(kp[0], kp[1], 6f, paint)
 
             withContext(Dispatchers.Main) {
                 processedImageView.visibility = View.VISIBLE
                 processedImageView.setImageBitmap(mutableFrame)
+                tvModelInfo.text = "✅ FACE DETECTED!\nScore: ${"%.2f".format(detection.score)}\n" +
+                        "Box: [${detection.x1.toInt()}, ${detection.y1.toInt()}, ${detection.x2.toInt()}, ${detection.y2.toInt()}]\n" +
+                        "Bindi placed at: [${centerX.toInt()}, ${centerY.toInt()}]"
             }
 
             saveImageToGallery(mutableFrame)
-            showToast("Success! Processed image displayed and saved.")
+            showToast("Success! AI placed the bindi on the forehead!")
 
         } catch (e: Exception) {
             e.printStackTrace()
@@ -181,7 +182,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         }
-
         val contentValues = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "ShagunAI_${System.currentTimeMillis()}.jpg")
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
@@ -190,12 +190,9 @@ class MainActivity : AppCompatActivity() {
                 put(MediaStore.Images.Media.IS_PENDING, 1)
             }
         }
-
         val imageUri = resolver.insert(imageCollection, contentValues)
         imageUri?.let { uri ->
-            resolver.openOutputStream(uri)?.use { out ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
-            }
+            resolver.openOutputStream(uri)?.use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 100, out) }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 contentValues.clear()
                 contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
@@ -205,9 +202,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private suspend fun showToast(message: String) {
-        withContext(Dispatchers.Main) {
-            Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
-        }
+        withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() }
     }
 
     private fun showBindiGrid() {
@@ -220,7 +215,6 @@ class MainActivity : AppCompatActivity() {
         grid.horizontalSpacing = 20
         grid.stretchMode = GridView.STRETCH_COLUMN_WIDTH
         grid.setPadding(20, 20, 20, 20)
-
         grid.adapter = object : BaseAdapter() {
             override fun getCount() = files.size
             override fun getItem(position: Int) = files[position]
@@ -235,7 +229,6 @@ class MainActivity : AppCompatActivity() {
                 return image
             }
         }
-
         grid.setOnItemClickListener { _, _, position, _ ->
             selectedBindiFileName = files[position]
             Toast.makeText(this, "Selected: ${files[position]}", Toast.LENGTH_SHORT).show()
