@@ -4,9 +4,9 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Matrix
-import android.media.Image
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
@@ -71,16 +71,15 @@ class VideoProcessor(
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
 
-            //  Find a working color format
-            val encoderName = MediaFormat.MIMETYPE_VIDEO_AVC
-            val codecInfo = findCodecForFormat(encoderName)
-                ?: throw Exception("No H.264 encoder found")
+            // Find a working codec and color format dynamically
+            val codecInfo = findCodecForFormat(MediaFormat.MIMETYPE_VIDEO_AVC)
+                ?: throw Exception("No H.264 encoder found on this device")
             
             val colorFormat = findSupportedColorFormat(codecInfo)
-                ?: throw Exception("No supported color format found")
+                ?: throw Exception("No supported YUV color format found")
             
             format.setInteger(MediaFormat.KEY_COLOR_FORMAT, colorFormat)
-            lastSummary = "Using codec: ${codecInfo.name}\nColor format: $colorFormat"
+            lastSummary = "Codec: ${codecInfo.name}\nColor: $colorFormat"
 
             encoder = MediaCodec.createByCodecName(codecInfo.name)
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
@@ -147,9 +146,9 @@ class VideoProcessor(
     }
 
     private fun findCodecForFormat(mime: String): MediaCodecInfo? {
-        val numCodecs = MediaCodecList.getCodecCount()
-        for (i in 0 until numCodecs) {
-            val info = MediaCodecList.getCodecInfoAt(i)
+        // Modern API 21+ way to get codec list
+        val codecList = MediaCodecList(MediaCodecList.REGULAR_CODECS)
+        for (info in codecList.codecInfos) {
             if (!info.isEncoder) continue
             try {
                 if (info.getCapabilitiesForType(mime) != null) {
@@ -164,7 +163,7 @@ class VideoProcessor(
         val caps = info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
         val formats = caps.colorFormats
         
-        // Prefer these in order
+        // Prefer standard YUV420 formats in this order
         val preferred = listOf(
             MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar, // 19
             MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar, // 21
@@ -178,7 +177,7 @@ class VideoProcessor(
             if (fmt != -1 && formats.contains(fmt)) return fmt
         }
         
-        // Fallback to first available
+        // Fallback to first available format
         return formats.firstOrNull()
     }
 
@@ -199,7 +198,7 @@ class VideoProcessor(
             if (inIdx >= 0) {
                 val buffer = encoder.getInputBuffer(inIdx)
                     ?: return false
-                bitmapToYuvBuffer(bmp, buffer, encoder.inputBuffers[inIdx])
+                bitmapToYuvBuffer(bmp, buffer)
                 encoder.queueInputBuffer(inIdx, 0, buffer.limit(), ptsUs, 0)
                 drainEncoder(encoder, muxer, false)
                 return true
@@ -209,13 +208,12 @@ class VideoProcessor(
         }
     }
 
-    private fun bitmapToYuvBuffer(bmp: Bitmap, outBuffer: ByteBuffer, inputBuffer: ByteBuffer?) {
+    private fun bitmapToYuvBuffer(bmp: Bitmap, outBuffer: ByteBuffer) {
         val w = bmp.width
         val h = bmp.height
         val pixels = IntArray(w * h)
         bmp.getPixels(pixels, 0, w, 0, 0, w, h)
 
-        // Simple RGB to YUV420 conversion
         val ySize = w * h
         val uvSize = w * h / 4
 
@@ -231,7 +229,7 @@ class VideoProcessor(
             outBuffer.put(y.toByte())
         }
 
-        // U and V planes (subsampled)
+        // U and V planes (subsampled 2x2)
         for (row in 0 until h step 2) {
             for (col in 0 until w step 2) {
                 val idx = row * w + col
