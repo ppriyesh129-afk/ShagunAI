@@ -89,7 +89,7 @@ class MainActivity : AppCompatActivity() {
                     BitmapFactory.decodeStream(s)
                 }
 
-                // ✅ FIX: Declare a nullable reference variable first
+                // ✅ Declare a nullable reference variable first
                 var processorRef: VideoProcessor? = null
                 
                 val processor = VideoProcessor(
@@ -103,7 +103,7 @@ class MainActivity : AppCompatActivity() {
                     onResult = { uri, error ->
                         processButton.isEnabled = true
                         if (uri != null) {
-                            // ✅ FIX: Use processorRef instead of processor
+                            // ✅ Use processorRef to access lastSummary
                             tvModelInfo.text = "✅ VIDEO COMPLETE!\n${processorRef?.lastSummary ?: ""}\nSaved to Movies/ShagunAI\nPlaying result above ☝"
                             videoPreview.setVideoURI(uri)
                             videoPreview.requestFocus()
@@ -116,9 +116,13 @@ class MainActivity : AppCompatActivity() {
                     }
                 )
                 
-                // ✅ FIX: Assign the fully created object to the reference
+                // ✅ Assign the fully created object to the reference
                 processorRef = processor
-                BindiRenderer.resetSmoothing() // ✅ Reset smoothing for new video
+                
+                // ✅ Reset smoothing state for the new video
+                BindiRenderer.resetSmoothing()
+                
+                // ✅ Start processing
                 processor.process()
             }
         }
