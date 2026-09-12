@@ -23,6 +23,7 @@ import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.GridView
 import android.widget.ImageView
+import android.widget.TextView
 import android.widget.Toast
 import android.widget.VideoView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,6 +39,7 @@ class MainActivity : AppCompatActivity() {
     private var selectedBindiFileName: String? = null
     private lateinit var videoPreview: VideoView
     private lateinit var processedImageView: ImageView
+    private lateinit var tvModelInfo: TextView // NEW: For on-screen debugging
 
     private lateinit var ortEnv: OrtEnvironment
     private lateinit var ortSession: OrtSession
@@ -58,6 +60,7 @@ class MainActivity : AppCompatActivity() {
 
         videoPreview = findViewById(R.id.videoPreview)
         processedImageView = findViewById(R.id.processedImage)
+        tvModelInfo = findViewById(R.id.tvModelInfo) // Initialize Text View
 
         initOnnxModel()
 
@@ -92,43 +95,35 @@ class MainActivity : AppCompatActivity() {
             val sessionOptions = OrtSession.SessionOptions()
             ortSession = ortEnv.createSession(modelBytes, sessionOptions)
             
-            Log.d("ShagunAI_ONNX", "✅ Model loaded successfully!")
-            printModelDetails() // <-- NEW: Prints the model's exact requirements
+            // Print the model info directly to the screen!
+            tvModelInfo.text = "✅ AI Model Loaded!\n\n" + getModelInfoString()
             
         } catch (e: Exception) {
             Log.e("ShagunAI_ONNX", "❌ Failed to load ONNX model", e)
-            Toast.makeText(this, "Failed to load AI model", Toast.LENGTH_LONG).show()
+            tvModelInfo.text = "❌ Failed to load model: ${e.message}"
         }
     }
 
-    // 🔍 DIAGNOSTIC FUNCTION
-    private fun printModelDetails() {
-        Log.d("ShagunAI_INFO", "===============================")
-        Log.d("ShagunAI_INFO", "🤖 MODEL DIAGNOSTICS")
-        Log.d("ShagunAI_INFO", "===============================")
-        
-        Log.d("ShagunAI_INFO", "--- INPUTS ---")
+    // This creates the text that will show on your screen
+    private fun getModelInfoString(): String {
+        val sb = StringBuilder()
+        sb.append("--- INPUTS ---\n")
         for ((name, nodeInfo) in ortSession.inputInfo) {
             val info = nodeInfo.info
             if (info is TensorInfo) {
-                Log.d("ShagunAI_INFO", "Input Name: \"$name\"")
-                Log.d("ShagunAI_INFO", "Shape: [${info.shape.joinToString()}]")
-            } else {
-                Log.d("ShagunAI_INFO", "Input Name: \"$name\" (Unknown shape)")
+                sb.append("Name: \"$name\"\n")
+                sb.append("Shape: [${info.shape.joinToString()}]\n\n")
             }
         }
-
-        Log.d("ShagunAI_INFO", "--- OUTPUTS ---")
+        sb.append("--- OUTPUTS ---\n")
         for ((name, nodeInfo) in ortSession.outputInfo) {
             val info = nodeInfo.info
             if (info is TensorInfo) {
-                Log.d("ShagunAI_INFO", "Output Name: \"$name\"")
-                Log.d("ShagunAI_INFO", "Shape: [${info.shape.joinToString()}]")
-            } else {
-                Log.d("ShagunAI_INFO", "Output Name: \"$name\" (Unknown shape)")
+                sb.append("Name: \"$name\"\n")
+                sb.append("Shape: [${info.shape.joinToString()}]\n\n")
             }
         }
-        Log.d("ShagunAI_INFO", "===============================")
+        return sb.toString()
     }
 
     private suspend fun processVideoFrame() {
@@ -166,6 +161,7 @@ class MainActivity : AppCompatActivity() {
             canvas.drawRect(xPos.toFloat(), yPos.toFloat(), (xPos + bindiWidth).toFloat(), (yPos + bindiHeight).toFloat(), paint)
 
             withContext(Dispatchers.Main) {
+                processedImageView.visibility = View.VISIBLE
                 processedImageView.setImageBitmap(mutableFrame)
             }
 
