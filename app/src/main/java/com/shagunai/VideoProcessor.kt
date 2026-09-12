@@ -220,26 +220,31 @@ class VideoProcessor(
         outBuffer.clear()
         outBuffer.limit(ySize + 2 * uvSize)
 
-        // Y plane
+        // Y plane (luminance) - BT.601 full range with clamping
         for (i in pixels) {
             val r = (i shr 16) and 0xFF
             val g = (i shr 8) and 0xFF
             val b = i and 0xFF
+            
+            // BT.601 Y (16-235 range)
             val y = ((66 * r + 129 * g + 25 * b + 128) shr 8) + 16
-            outBuffer.put(y.toByte())
+            outBuffer.put(y.coerceIn(16, 235).toByte())
         }
 
-        // U and V planes (subsampled 2x2)
+        // U and V planes (chrominance) - subsampled 2x2 with clamping
         for (row in 0 until h step 2) {
             for (col in 0 until w step 2) {
                 val idx = row * w + col
                 val r = (pixels[idx] shr 16) and 0xFF
                 val g = (pixels[idx] shr 8) and 0xFF
                 val b = pixels[idx] and 0xFF
+                
+                // BT.601 U/V (16-240 range)
                 val u = ((-38 * r - 74 * g + 112 * b + 128) shr 8) + 128
                 val v = ((112 * r - 94 * g - 18 * b + 128) shr 8) + 128
-                outBuffer.put(u.toByte())
-                outBuffer.put(v.toByte())
+                
+                outBuffer.put(u.coerceIn(16, 240).toByte())
+                outBuffer.put(v.coerceIn(16, 240).toByte())
             }
         }
         outBuffer.flip()
