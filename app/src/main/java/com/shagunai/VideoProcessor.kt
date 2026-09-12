@@ -37,6 +37,7 @@ class VideoProcessor(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var muxerStarted = false
     private var trackIndex = -1
+    private var selectedColorFormat = 0
 
     fun process() {
         var encoder: MediaCodec? = null
@@ -66,18 +67,18 @@ class VideoProcessor(
 
             stage = "configuring encoder"
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
-                setInteger(MediaFormat.KEY_BIT_RATE, (w * h * FPS).coerceIn(2_000_000, 20_000_000))
+                setInteger(MediaFormat.KEY_BIT_RATE, (w * h * FPS).coerceIn(4_000_000, 20_000_000))
                 setInteger(MediaFormat.KEY_FRAME_RATE, FPS)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
 
-            // Find a working codec and color format dynamically
             val codecInfo = findCodecForFormat(MediaFormat.MIMETYPE_VIDEO_AVC)
-                ?: throw Exception("No H.264 encoder found on this device")
+                ?: throw Exception("No H.264 encoder found")
             
             val colorFormat = findSupportedColorFormat(codecInfo)
-                ?: throw Exception("No supported YUV color format found")
+                ?: throw Exception("No supported YUV format")
             
+            selectedColorFormat = colorFormat
             format.setInteger(MediaFormat.KEY_COLOR_FORMAT, colorFormat)
             lastSummary = "Codec: ${codecInfo.name}\nColor: $colorFormat"
 
@@ -98,9 +99,7 @@ class VideoProcessor(
                 val sized = if (oriented.width != w || oriented.height != h) Bitmap.createScaledBitmap(oriented, w, h, true) else oriented
                 val rendered = BindiRenderer.render(sized, bindi, detector) ?: sized
 
-                if (feedFrame(encoder, muxer, rendered, tUs)) {
-                    framesProcessed++
-                }
+                if (feedFrame(encoder, muxer, rendered, tUs)) framesProcessed++
                 mainHandler.post { onProgress(i + 1, totalFrames) }
 
                 if (sized !== oriented) sized.recycle()
@@ -109,7 +108,7 @@ class VideoProcessor(
             }
 
             stage = "finalizing encoder"
-            if (framesProcessed == 0) throw Exception("No frames were encoded")
+            if (framesProcessed == 0) throw Exception("No frames encoded")
             queueEndOfStream(encoder, muxer)
             drainEncoder(encoder, muxer, true)
 
@@ -124,14 +123,12 @@ class VideoProcessor(
             try {
                 verify.setDataSource(outFile.absolutePath)
                 val d = verify.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-                val vw = verify.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
-                val vh = verify.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
                 verify.release()
                 if (d <= 0L) throw Exception("duration=0")
-                lastSummary += "\nVerified: ${d}ms, ${vw}x${vh}, ${outFile.length() / 1024}KB"
+                lastSummary += "\nVerified: ${d}ms, ${outFile.length() / 1024}KB"
             } catch (e: Exception) {
                 verify.release()
-                throw Exception("invalid MP4 (size=${outFile.length()}B): ${e.message}")
+                throw Exception("invalid MP4: ${e.message}")
             }
 
             stage = "saving to gallery"
@@ -140,21 +137,15 @@ class VideoProcessor(
         } catch (e: Exception) {
             e.printStackTrace()
             try { encoder?.release(); muxer?.release(); retriever?.release() } catch (_: Exception) {}
-            val msg = "$stage → ${e.javaClass.simpleName}: ${e.message}"
-            mainHandler.post { onResult(null, msg) }
+            mainHandler.post { onResult(null, "$stage → ${e.message}") }
         }
     }
 
     private fun findCodecForFormat(mime: String): MediaCodecInfo? {
-        // Modern API 21+ way to get codec list
         val codecList = MediaCodecList(MediaCodecList.REGULAR_CODECS)
         for (info in codecList.codecInfos) {
             if (!info.isEncoder) continue
-            try {
-                if (info.getCapabilitiesForType(mime) != null) {
-                    return info
-                }
-            } catch (_: Exception) {}
+            try { if (info.getCapabilitiesForType(mime) != null) return info } catch (_: Exception) {}
         }
         return null
     }
@@ -162,22 +153,13 @@ class VideoProcessor(
     private fun findSupportedColorFormat(info: MediaCodecInfo): Int? {
         val caps = info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
         val formats = caps.colorFormats
-        
-        // Prefer standard YUV420 formats in this order
+        // Prefer SemiPlanar (NV12/NV21) as it's most common on mobile
         val preferred = listOf(
-            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar, // 19
             MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar, // 21
-            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420PackedPlanar, // 18
-            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420PackedSemiPlanar, // 39
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) 
-                MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible else -1
+            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar,     // 19
+            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420PackedSemiPlanar // 39
         )
-
-        for (fmt in preferred) {
-            if (fmt != -1 && formats.contains(fmt)) return fmt
-        }
-        
-        // Fallback to first available format
+        for (fmt in preferred) { if (formats.contains(fmt)) return fmt }
         return formats.firstOrNull()
     }
 
@@ -196,8 +178,7 @@ class VideoProcessor(
         while (true) {
             val inIdx = encoder.dequeueInputBuffer(TIMEOUT_US)
             if (inIdx >= 0) {
-                val buffer = encoder.getInputBuffer(inIdx)
-                    ?: return false
+                val buffer = encoder.getInputBuffer(inIdx) ?: return false
                 bitmapToYuvBuffer(bmp, buffer)
                 encoder.queueInputBuffer(inIdx, 0, buffer.limit(), ptsUs, 0)
                 drainEncoder(encoder, muxer, false)
@@ -208,6 +189,8 @@ class VideoProcessor(
         }
     }
 
+    // FIXED: Correctly handles both Planar (I420) and SemiPlanar (NV12/NV21) formats
+    // and uses full 0-255 range to prevent color loss.
     private fun bitmapToYuvBuffer(bmp: Bitmap, outBuffer: ByteBuffer) {
         val w = bmp.width
         val h = bmp.height
@@ -215,36 +198,59 @@ class VideoProcessor(
         bmp.getPixels(pixels, 0, w, 0, 0, w, h)
 
         val ySize = w * h
-        val uvSize = w * h / 4
+        val uvSize = ySize / 4
 
         outBuffer.clear()
         outBuffer.limit(ySize + 2 * uvSize)
 
-        // Y plane (luminance) - BT.601 full range with clamping
+        // Y plane (full range 0-255)
         for (i in pixels) {
             val r = (i shr 16) and 0xFF
             val g = (i shr 8) and 0xFF
             val b = i and 0xFF
-            
-            // BT.601 Y (16-235 range)
-            val y = ((66 * r + 129 * g + 25 * b + 128) shr 8) + 16
-            outBuffer.put(y.coerceIn(16, 235).toByte())
+            val y = (0.299 * r + 0.587 * g + 0.114 * b).toInt()
+            outBuffer.put(y.coerceIn(0, 255).toByte())
         }
 
-        // U and V planes (chrominance) - subsampled 2x2 with clamping
-        for (row in 0 until h step 2) {
-            for (col in 0 until w step 2) {
-                val idx = row * w + col
-                val r = (pixels[idx] shr 16) and 0xFF
-                val g = (pixels[idx] shr 8) and 0xFF
-                val b = pixels[idx] and 0xFF
-                
-                // BT.601 U/V (16-240 range)
-                val u = ((-38 * r - 74 * g + 112 * b + 128) shr 8) + 128
-                val v = ((112 * r - 94 * g - 18 * b + 128) shr 8) + 128
-                
-                outBuffer.put(u.coerceIn(16, 240).toByte())
-                outBuffer.put(v.coerceIn(16, 240).toByte())
+        val isSemiPlanar = (selectedColorFormat == MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar ||
+                            selectedColorFormat == MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420PackedSemiPlanar)
+
+        if (isSemiPlanar) {
+            // NV12/NV21: Interleaved U and V
+            for (row in 0 until h step 2) {
+                for (col in 0 until w step 2) {
+                    val idx = row * w + col
+                    val r = (pixels[idx] shr 16) and 0xFF
+                    val g = (pixels[idx] shr 8) and 0xFF
+                    val b = pixels[idx] and 0xFF
+                    val u = (-0.169 * r - 0.331 * g + 0.500 * b + 128).toInt()
+                    val v = (0.500 * r - 0.419 * g - 0.081 * b + 128).toInt()
+                    // NV12 order: U then V. NV21 is V then U. Most Android encoders want NV12 for format 21.
+                    outBuffer.put(u.coerceIn(0, 255).toByte())
+                    outBuffer.put(v.coerceIn(0, 255).toByte())
+                }
+            }
+        } else {
+            // Planar (I420): All U then all V
+            for (row in 0 until h step 2) {
+                for (col in 0 until w step 2) {
+                    val idx = row * w + col
+                    val r = (pixels[idx] shr 16) and 0xFF
+                    val g = (pixels[idx] shr 8) and 0xFF
+                    val b = pixels[idx] and 0xFF
+                    val u = (-0.169 * r - 0.331 * g + 0.500 * b + 128).toInt()
+                    outBuffer.put(u.coerceIn(0, 255).toByte())
+                }
+            }
+            for (row in 0 until h step 2) {
+                for (col in 0 until w step 2) {
+                    val idx = row * w + col
+                    val r = (pixels[idx] shr 16) and 0xFF
+                    val g = (pixels[idx] shr 8) and 0xFF
+                    val b = pixels[idx] and 0xFF
+                    val v = (0.500 * r - 0.419 * g - 0.081 * b + 128).toInt()
+                    outBuffer.put(v.coerceIn(0, 255).toByte())
+                }
             }
         }
         outBuffer.flip()
