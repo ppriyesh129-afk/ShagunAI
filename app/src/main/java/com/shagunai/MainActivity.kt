@@ -22,6 +22,7 @@ import androidx.appcompat.app.AppCompatActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -53,12 +54,24 @@ class MainActivity : AppCompatActivity() {
         tvModelInfo = findViewById(R.id.tvModelInfo)
         processButton = findViewById(R.id.btnProcess)
 
+        // 🆕 If MediaStore URI playback fails, retry from the local cache copy
+        videoPreview.setOnErrorListener { _, what, extra ->
+            tvModelInfo.append("\n❌ Player error what=$what extra=$extra\nTrying local fallback...")
+            val fallback = cacheDir.listFiles()
+                ?.filter { it.name.startsWith("shagun_") && it.name.endsWith(".mp4") }
+                ?.maxByOrNull { it.lastModified() }
+            if (fallback != null) {
+                videoPreview.setVideoURI(Uri.fromFile(fallback))
+                videoPreview.start()
+            }
+            true
+        }
+
         initOnnxModel()
 
         findViewById<Button>(R.id.btnUpload).setOnClickListener { videoPicker.launch("video/*") }
         findViewById<Button>(R.id.btnBindi).setOnClickListener { showBindiGrid() }
 
-        // 🎬 PROCESS = FULL VIDEO PIPELINE (decode -> AI -> encode -> play)
         processButton.setOnClickListener {
             if (selectedVideoUri == null) {
                 Toast.makeText(this, "Please upload a video first", Toast.LENGTH_SHORT).show()
@@ -77,7 +90,7 @@ class MainActivity : AppCompatActivity() {
                     BitmapFactory.decodeStream(s)
                 }
 
-                VideoProcessor(
+                val processor = VideoProcessor(
                     this@MainActivity,
                     selectedVideoUri!!,
                     bindi,
@@ -85,12 +98,12 @@ class MainActivity : AppCompatActivity() {
                     onProgress = { i, total ->
                         tvModelInfo.text = "⏳ AI processing frame $i / $total\nPlease wait..."
                     },
-                    // ✅ UPDATED: now receives (uri, error) so failures show the exact cause
                     onResult = { uri, error ->
                         processButton.isEnabled = true
                         if (uri != null) {
-                            tvModelInfo.text = "✅ VIDEO COMPLETE!\nSaved to Movies/ShagunAI\nPlaying result above ☝"
+                            tvModelInfo.text = "✅ VIDEO COMPLETE!\n${processor.lastSummary}\nSaved to Movies/ShagunAI\nPlaying result above ☝"
                             videoPreview.setVideoURI(uri)
+                            videoPreview.requestFocus()
                             videoPreview.start()
                             Toast.makeText(this@MainActivity, "Done! Video saved & playing.", Toast.LENGTH_LONG).show()
                         } else {
@@ -98,7 +111,8 @@ class MainActivity : AppCompatActivity() {
                             Toast.makeText(this@MainActivity, "Processing failed", Toast.LENGTH_LONG).show()
                         }
                     }
-                ).process()
+                )
+                processor.process()
             }
         }
     }
