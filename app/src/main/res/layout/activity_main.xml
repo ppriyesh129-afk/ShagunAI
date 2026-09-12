@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="#121212">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -9,6 +10,19 @@
         android:gravity="center_horizontal"
         android:orientation="vertical"
         android:padding="24dp">
+
+        <!-- NEW: Text View to show AI Model Info -->
+        <TextView
+            android:id="@+id/tvModelInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Loading AI Model..."
+            android:textColor="#00FF00"
+            android:background="#000000"
+            android:padding="12dp"
+            android:fontFamily="monospace"
+            android:textSize="14sp"
+            android:layout_marginBottom="16dp"/>
 
         <VideoView
             android:id="@+id/videoPreview"
@@ -21,23 +35,23 @@
             android:id="@+id/btnUpload"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Upload Video" />
+            android:text="Upload Video"/>
 
         <Button
             android:id="@+id/btnBindi"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="Choose Bindi" />
+            android:text="Choose Bindi"/>
 
         <Button
             android:id="@+id/btnProcess"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="Process Video" />
-
-        <!-- NEW: ImageView to display the AI processed frame -->
+            android:text="Process Video"/>
+            
+        <!-- Hidden Image View to show the result later -->
         <ImageView
             android:id="@+id/processedImage"
             android:layout_width="match_parent"
