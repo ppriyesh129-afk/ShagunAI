@@ -22,7 +22,6 @@ import androidx.appcompat.app.AppCompatActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -90,6 +89,9 @@ class MainActivity : AppCompatActivity() {
                     BitmapFactory.decodeStream(s)
                 }
 
+                // ✅ FIX: Declare a nullable reference variable first
+                var processorRef: VideoProcessor? = null
+                
                 val processor = VideoProcessor(
                     this@MainActivity,
                     selectedVideoUri!!,
@@ -101,7 +103,8 @@ class MainActivity : AppCompatActivity() {
                     onResult = { uri, error ->
                         processButton.isEnabled = true
                         if (uri != null) {
-                            tvModelInfo.text = "✅ VIDEO COMPLETE!\n${processor.lastSummary}\nSaved to Movies/ShagunAI\nPlaying result above ☝"
+                            // ✅ FIX: Use processorRef instead of processor
+                            tvModelInfo.text = "✅ VIDEO COMPLETE!\n${processorRef?.lastSummary ?: ""}\nSaved to Movies/ShagunAI\nPlaying result above ☝"
                             videoPreview.setVideoURI(uri)
                             videoPreview.requestFocus()
                             videoPreview.start()
@@ -112,6 +115,9 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 )
+                
+                // ✅ FIX: Assign the fully created object to the reference
+                processorRef = processor
                 processor.process()
             }
         }
