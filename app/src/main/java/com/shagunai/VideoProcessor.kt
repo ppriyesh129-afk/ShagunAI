@@ -23,7 +23,7 @@ class VideoProcessor(
     private val bindi: Bitmap,
     private val detector: FaceDetector,
     private val onProgress: (Int, Int) -> Unit,
-    private val onResult: (Uri?) -> Unit
+    private val onResult: (Uri?, String?) -> Unit
 ) {
     companion object {
         const val FPS = 24
@@ -38,32 +38,32 @@ class VideoProcessor(
         var encoder: MediaCodec? = null
         var muxer: MediaMuxer? = null
         var retriever: MediaMetadataRetriever? = null
+        var stage = "init"
         try {
+            stage = "reading video info"
             retriever = MediaMetadataRetriever()
             retriever.setDataSource(context, videoUri)
             val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-            
-            // ✅ FIX 1: Correct Android constant for video rotation
             val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
-            
             val probe = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST)
-            if (durationMs == 0L || probe == null) throw Exception("Bad video")
+            if (durationMs == 0L || probe == null) throw Exception("Could not read video")
 
             var w = probe.width
             var h = probe.height
-            if (rotation == 90 || rotation == 270) { 
-                val temp = w; w = h; h = temp 
-            }
-            // Ensure dimensions are even numbers for the encoder
+            if (rotation == 90 || rotation == 270) { val t = w; w = h; h = t }
             w -= w % 2
             h -= h % 2
-            if (w <= 0) w = 720
-            if (h <= 0) h = 1280
+            if (w < 64) w = 64
+            if (h < 64) h = 64
+            probe.recycle()
 
+            stage = "creating output file"
             val outFile = File(context.cacheDir, "shagun_${System.currentTimeMillis()}.mp4")
+
+            stage = "configuring encoder"
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
-                setInteger(MediaFormat.KEY_BIT_RATE, (w * h * FPS).coerceAtLeast(2_000_000))
+                setInteger(MediaFormat.KEY_BIT_RATE, (w * h * FPS).coerceIn(2_000_000, 20_000_000))
                 setInteger(MediaFormat.KEY_FRAME_RATE, FPS)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             }
@@ -76,6 +76,7 @@ class VideoProcessor(
             val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
 
             for (i in 0 until totalFrames) {
+                stage = "frame ${i + 1}/$totalFrames"
                 val tUs = i * 1_000_000L / FPS
                 val raw = retriever.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST) ?: continue
                 val oriented = if (rotation != 0) Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, matrix, true) else raw
@@ -90,19 +91,37 @@ class VideoProcessor(
                 raw.recycle()
             }
 
+            // ✅ FIXED: proper end-of-stream for buffer mode (no signalEndOfInputStream!)
+            stage = "finalizing encoder"
+            queueEndOfStream(encoder, muxer)
             drain(encoder, muxer, true)
+
+            stage = "closing files"
             encoder.stop(); encoder.release()
             muxer.stop(); muxer.release()
             retriever.release()
             encoder = null; muxer = null; retriever = null
 
+            stage = "saving to gallery"
             val savedUri = publish(outFile)
             outFile.delete()
-            mainHandler.post { onResult(savedUri) }
+            mainHandler.post { onResult(savedUri, null) }
         } catch (e: Exception) {
             e.printStackTrace()
             try { encoder?.release(); muxer?.release(); retriever?.release() } catch (_: Exception) {}
-            mainHandler.post { onResult(null) }
+            val msg = "$stage → ${e.javaClass.simpleName}: ${e.message}"
+            mainHandler.post { onResult(null, msg) }
+        }
+    }
+
+    private fun queueEndOfStream(encoder: MediaCodec, muxer: MediaMuxer) {
+        while (true) {
+            val inIdx = encoder.dequeueInputBuffer(TIMEOUT_US)
+            if (inIdx >= 0) {
+                encoder.queueInputBuffer(inIdx, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                return
+            }
+            drain(encoder, muxer, false)
         }
     }
 
@@ -111,10 +130,9 @@ class VideoProcessor(
             val inIdx = encoder.dequeueInputBuffer(TIMEOUT_US)
             if (inIdx >= 0) {
                 val image = encoder.getInputImage(inIdx)
-                if (image != null) {
-                    bitmapToYuv(bmp, image)
-                    image.close()
-                }
+                    ?: throw Exception("Encoder does not support flexible YUV input")
+                bitmapToYuv(bmp, image)
+                image.close()
                 encoder.queueInputBuffer(inIdx, 0, 0, ptsUs, 0)
                 break
             }
@@ -124,7 +142,6 @@ class VideoProcessor(
     }
 
     private fun drain(encoder: MediaCodec, muxer: MediaMuxer, endOfStream: Boolean) {
-        if (endOfStream) encoder.signalEndOfInputStream()
         val info = MediaCodec.BufferInfo()
         while (true) {
             val outIdx = encoder.dequeueOutputBuffer(info, TIMEOUT_US)
@@ -140,7 +157,8 @@ class VideoProcessor(
                     if (buf == null) { encoder.releaseOutputBuffer(outIdx, false); continue }
                     if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) info.size = 0
                     if (info.size > 0 && muxerStarted) {
-                        buf.position(info.offset); buf.limit(info.offset + info.size)
+                        buf.position(info.offset)
+                        buf.limit(info.offset + info.size)
                         muxer.writeSampleData(trackIndex, buf, info)
                     }
                     encoder.releaseOutputBuffer(outIdx, false)
@@ -155,27 +173,25 @@ class VideoProcessor(
         val h = bmp.height
         val px = IntArray(w * h)
         bmp.getPixels(px, 0, w, 0, 0, w, h)
-        
-        // ✅ FIX 2 & 3: Explicitly declare 'val' for planes and color variables
+
         val yPlane = image.planes[0]
         val uPlane = image.planes[1]
         val vPlane = image.planes[2]
-        
         val yRow = yPlane.rowStride
         val uvRow = uPlane.rowStride
         val uvPix = uPlane.pixelStride
-        
+
         for (r in 0 until h) {
             for (c in 0 until w) {
                 val p = px[r * w + c]
                 val rr = (p shr 16) and 0xFF
                 val gg = (p shr 8) and 0xFF
                 val bb = p and 0xFF
-                
+
                 val y = ((66 * rr + 129 * gg + 25 * bb + 128) shr 8) + 16
                 val u = ((-38 * rr - 74 * gg + 112 * bb + 128) shr 8) + 128
                 val v = ((112 * rr - 94 * gg - 18 * bb + 128) shr 8) + 128
-                
+
                 yPlane.buffer.put(r * yRow + c, y.toByte())
                 if (r % 2 == 0 && c % 2 == 0) {
                     uPlane.buffer.put((r / 2) * uvRow + (c / 2) * uvPix, u.toByte())
