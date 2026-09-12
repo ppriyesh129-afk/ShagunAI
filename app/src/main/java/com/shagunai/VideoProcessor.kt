@@ -30,6 +30,9 @@ class VideoProcessor(
         private const val TIMEOUT_US = 10_000L
     }
 
+    var lastSummary = ""
+        private set
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private var muxerStarted = false
     private var trackIndex = -1
@@ -91,7 +94,6 @@ class VideoProcessor(
                 raw.recycle()
             }
 
-            // ✅ FIXED: proper end-of-stream for buffer mode (no signalEndOfInputStream!)
             stage = "finalizing encoder"
             queueEndOfStream(encoder, muxer)
             drain(encoder, muxer, true)
@@ -102,9 +104,25 @@ class VideoProcessor(
             retriever.release()
             encoder = null; muxer = null; retriever = null
 
+            // 🔍 NEW: verify the MP4 is structurally valid before celebrating
+            stage = "verifying output"
+            val verify = MediaMetadataRetriever()
+            try {
+                verify.setDataSource(outFile.absolutePath)
+                val d = verify.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                val vw = verify.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                val vh = verify.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                verify.release()
+                if (d <= 0L) throw Exception("duration=0")
+                lastSummary = "Verified: ${d}ms, ${vw}x${vh}, ${outFile.length() / 1024}KB"
+            } catch (e: Exception) {
+                verify.release()
+                throw Exception("invalid MP4 (size=${outFile.length()}B): ${e.message}")
+            }
+
             stage = "saving to gallery"
             val savedUri = publish(outFile)
-            outFile.delete()
+            // NOTE: we keep the cache copy as a playback fallback
             mainHandler.post { onResult(savedUri, null) }
         } catch (e: Exception) {
             e.printStackTrace()
