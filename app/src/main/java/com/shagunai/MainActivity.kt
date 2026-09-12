@@ -2,6 +2,7 @@ package com.shagunai
 
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import ai.onnxruntime.TensorInfo
 import android.app.Dialog
 import android.content.ContentValues
 import android.graphics.Bitmap
@@ -38,7 +39,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var videoPreview: VideoView
     private lateinit var processedImageView: ImageView
 
-    // ONNX Runtime variables
     private lateinit var ortEnv: OrtEnvironment
     private lateinit var ortSession: OrtSession
 
@@ -59,7 +59,6 @@ class MainActivity : AppCompatActivity() {
         videoPreview = findViewById(R.id.videoPreview)
         processedImageView = findViewById(R.id.processedImage)
 
-        // 1. Load the AI Model when the app starts
         initOnnxModel()
 
         val upload = findViewById<Button>(R.id.btnUpload)
@@ -93,17 +92,43 @@ class MainActivity : AppCompatActivity() {
             val sessionOptions = OrtSession.SessionOptions()
             ortSession = ortEnv.createSession(modelBytes, sessionOptions)
             
-            // This is crucial! It prints what the AI model expects as input.
             Log.d("ShagunAI_ONNX", "✅ Model loaded successfully!")
-            Log.d("ShagunAI_ONNX", "Inputs: ${ortSession.inputNames}")
-            Log.d("ShagunAI_ONNX", "Outputs: ${ortSession.outputNames}")
+            printModelDetails() // <-- NEW: Prints the model's exact requirements
             
         } catch (e: Exception) {
             Log.e("ShagunAI_ONNX", "❌ Failed to load ONNX model", e)
-            withContext(Dispatchers.Main) {
-                Toast.makeText(this, "Failed to load AI model", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Failed to load AI model", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // 🔍 DIAGNOSTIC FUNCTION
+    private fun printModelDetails() {
+        Log.d("ShagunAI_INFO", "===============================")
+        Log.d("ShagunAI_INFO", "🤖 MODEL DIAGNOSTICS")
+        Log.d("ShagunAI_INFO", "===============================")
+        
+        Log.d("ShagunAI_INFO", "--- INPUTS ---")
+        for ((name, nodeInfo) in ortSession.inputInfo) {
+            val info = nodeInfo.info
+            if (info is TensorInfo) {
+                Log.d("ShagunAI_INFO", "Input Name: \"$name\"")
+                Log.d("ShagunAI_INFO", "Shape: [${info.shape.joinToString()}]")
+            } else {
+                Log.d("ShagunAI_INFO", "Input Name: \"$name\" (Unknown shape)")
             }
         }
+
+        Log.d("ShagunAI_INFO", "--- OUTPUTS ---")
+        for ((name, nodeInfo) in ortSession.outputInfo) {
+            val info = nodeInfo.info
+            if (info is TensorInfo) {
+                Log.d("ShagunAI_INFO", "Output Name: \"$name\"")
+                Log.d("ShagunAI_INFO", "Shape: [${info.shape.joinToString()}]")
+            } else {
+                Log.d("ShagunAI_INFO", "Output Name: \"$name\" (Unknown shape)")
+            }
+        }
+        Log.d("ShagunAI_INFO", "===============================")
     }
 
     private suspend fun processVideoFrame() {
@@ -126,7 +151,6 @@ class MainActivity : AppCompatActivity() {
             val canvas = Canvas(mutableFrame)
             val paint = Paint()
 
-            // For now, we place it in the center. Next step: use ONNX to find the face!
             val bindiWidth = mutableFrame.width / 8
             val bindiHeight = (bindiWidth.toFloat() / bindiBitmap.width * bindiBitmap.height).toInt()
             val scaledBindi = Bitmap.createScaledBitmap(bindiBitmap, bindiWidth, bindiHeight, true)
@@ -136,13 +160,11 @@ class MainActivity : AppCompatActivity() {
 
             canvas.drawBitmap(scaledBindi, xPos.toFloat(), yPos.toFloat(), paint)
 
-            // Draw a debugging box where the AI is currently looking
             paint.color = Color.RED
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 5f
             canvas.drawRect(xPos.toFloat(), yPos.toFloat(), (xPos + bindiWidth).toFloat(), (yPos + bindiHeight).toFloat(), paint)
 
-            // Update the UI with the processed image
             withContext(Dispatchers.Main) {
                 processedImageView.setImageBitmap(mutableFrame)
             }
