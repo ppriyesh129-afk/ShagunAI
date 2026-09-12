@@ -85,7 +85,8 @@ class MainActivity : AppCompatActivity() {
                     onProgress = { i, total ->
                         tvModelInfo.text = "⏳ AI processing frame $i / $total\nPlease wait..."
                     },
-                    onResult = { uri ->
+                    // ✅ UPDATED: now receives (uri, error) so failures show the exact cause
+                    onResult = { uri, error ->
                         processButton.isEnabled = true
                         if (uri != null) {
                             tvModelInfo.text = "✅ VIDEO COMPLETE!\nSaved to Movies/ShagunAI\nPlaying result above ☝"
@@ -93,7 +94,7 @@ class MainActivity : AppCompatActivity() {
                             videoPreview.start()
                             Toast.makeText(this@MainActivity, "Done! Video saved & playing.", Toast.LENGTH_LONG).show()
                         } else {
-                            tvModelInfo.text = "❌ Processing failed. Try a shorter video."
+                            tvModelInfo.text = "❌ Failed at: $error"
                             Toast.makeText(this@MainActivity, "Processing failed", Toast.LENGTH_LONG).show()
                         }
                     }
