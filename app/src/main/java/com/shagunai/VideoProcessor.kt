@@ -42,13 +42,23 @@ class VideoProcessor(
             retriever = MediaMetadataRetriever()
             retriever.setDataSource(context, videoUri)
             val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ROTATION)?.toIntOrNull() ?: 0
+            
+            // ✅ FIX 1: Correct Android constant for video rotation
+            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            
             val probe = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST)
             if (durationMs == 0L || probe == null) throw Exception("Bad video")
 
-            var w = probe.width; var h = probe.height
-            if (rotation == 90 || rotation == 270) { w = probe.height; h = probe.width }
-            w -= w % 2; h -= h % 2
+            var w = probe.width
+            var h = probe.height
+            if (rotation == 90 || rotation == 270) { 
+                val temp = w; w = h; h = temp 
+            }
+            // Ensure dimensions are even numbers for the encoder
+            w -= w % 2
+            h -= h % 2
+            if (w <= 0) w = 720
+            if (h <= 0) h = 1280
 
             val outFile = File(context.cacheDir, "shagun_${System.currentTimeMillis()}.mp4")
             val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h).apply {
@@ -101,7 +111,10 @@ class VideoProcessor(
             val inIdx = encoder.dequeueInputBuffer(TIMEOUT_US)
             if (inIdx >= 0) {
                 val image = encoder.getInputImage(inIdx)
-                if (image != null) { bitmapToYuv(bmp, image); image.close() }
+                if (image != null) {
+                    bitmapToYuv(bmp, image)
+                    image.close()
+                }
                 encoder.queueInputBuffer(inIdx, 0, 0, ptsUs, 0)
                 break
             }
@@ -138,20 +151,31 @@ class VideoProcessor(
     }
 
     private fun bitmapToYuv(bmp: Bitmap, image: Image) {
-        val w = bmp.width; val h = bmp.height
+        val w = bmp.width
+        val h = bmp.height
         val px = IntArray(w * h)
         bmp.getPixels(px, 0, w, 0, 0, w, h)
-        val yPlane = image.planes[0]; uPlane = image.planes[1]; vPlane = image.planes[2]
+        
+        // ✅ FIX 2 & 3: Explicitly declare 'val' for planes and color variables
+        val yPlane = image.planes[0]
+        val uPlane = image.planes[1]
+        val vPlane = image.planes[2]
+        
         val yRow = yPlane.rowStride
         val uvRow = uPlane.rowStride
         val uvPix = uPlane.pixelStride
+        
         for (r in 0 until h) {
             for (c in 0 until w) {
                 val p = px[r * w + c]
-                val rr = (p shr 16) and 0xFF; gg = (p shr 8) and 0xFF; bb = p and 0xFF
+                val rr = (p shr 16) and 0xFF
+                val gg = (p shr 8) and 0xFF
+                val bb = p and 0xFF
+                
                 val y = ((66 * rr + 129 * gg + 25 * bb + 128) shr 8) + 16
                 val u = ((-38 * rr - 74 * gg + 112 * bb + 128) shr 8) + 128
                 val v = ((112 * rr - 94 * gg - 18 * bb + 128) shr 8) + 128
+                
                 yPlane.buffer.put(r * yRow + c, y.toByte())
                 if (r % 2 == 0 && c % 2 == 0) {
                     uPlane.buffer.put((r / 2) * uvRow + (c / 2) * uvPix, u.toByte())
