@@ -3,7 +3,6 @@ package com.shagunai
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.app.Dialog
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
@@ -26,14 +25,13 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     private var selectedVideoUri: Uri? = null
-    private var selectedBindiFileName: String? = null
     private lateinit var videoPreview: VideoView
     private lateinit var tvModelInfo: TextView
     private lateinit var processButton: Button
 
     private lateinit var ortEnv: OrtEnvironment
     private lateinit var ortSession: OrtSession
-    private lateinit var faceDetector: FaceDetector
+    private lateinit var faceLandmarker: FaceLandmarker
 
     private val videoPicker =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -53,7 +51,6 @@ class MainActivity : AppCompatActivity() {
         tvModelInfo = findViewById(R.id.tvModelInfo)
         processButton = findViewById(R.id.btnProcess)
 
-        // 🆕 If MediaStore URI playback fails, retry from the local cache copy
         videoPreview.setOnErrorListener { _, what, extra ->
             tvModelInfo.append("\n❌ Player error what=$what extra=$extra\nTrying local fallback...")
             val fallback = cacheDir.listFiles()
@@ -69,42 +66,33 @@ class MainActivity : AppCompatActivity() {
         initOnnxModel()
 
         findViewById<Button>(R.id.btnUpload).setOnClickListener { videoPicker.launch("video/*") }
-        findViewById<Button>(R.id.btnBindi).setOnClickListener { showBindiGrid() }
+        
+        // We removed the Bindi grid button since we are drawing it procedurally now!
+        findViewById<Button>(R.id.btnBindi).visibility = View.GONE 
 
         processButton.setOnClickListener {
             if (selectedVideoUri == null) {
                 Toast.makeText(this, "Please upload a video first", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            if (selectedBindiFileName == null) {
-                Toast.makeText(this, "Please choose a bindi first", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
 
             processButton.isEnabled = false
-            tvModelInfo.text = "⏳ Starting AI video processing..."
+            tvModelInfo.text = " Starting AI video processing..."
 
             CoroutineScope(Dispatchers.IO).launch {
-                val bindi = assets.open("bindi/$selectedBindiFileName").use { s ->
-                    BitmapFactory.decodeStream(s)
-                }
-
-                // ✅ Declare a nullable reference variable first
                 var processorRef: VideoProcessor? = null
                 
                 val processor = VideoProcessor(
                     this@MainActivity,
                     selectedVideoUri!!,
-                    bindi,
-                    faceDetector,
+                    faceLandmarker,
                     onProgress = { i, total ->
                         tvModelInfo.text = "⏳ AI processing frame $i / $total\nPlease wait..."
                     },
                     onResult = { uri, error ->
                         processButton.isEnabled = true
                         if (uri != null) {
-                            // ✅ Use processorRef to access lastSummary
-                            tvModelInfo.text = "✅ VIDEO COMPLETE!\n${processorRef?.lastSummary ?: ""}\nSaved to Movies/ShagunAI\nPlaying result above ☝"
+                            tvModelInfo.text = "✅ VIDEO COMPLETE!\n${processorRef?.lastSummary ?: ""}\nSaved to Movies/ShagunAI\nPlaying result above "
                             videoPreview.setVideoURI(uri)
                             videoPreview.requestFocus()
                             videoPreview.start()
@@ -116,13 +104,8 @@ class MainActivity : AppCompatActivity() {
                     }
                 )
                 
-                // ✅ Assign the fully created object to the reference
                 processorRef = processor
-                
-                // ✅ Reset smoothing state for the new video
-                BindiRenderer.resetSmoothing()
-                
-                // ✅ Start processing
+                BindiRenderer.reset()
                 processor.process()
             }
         }
@@ -131,46 +114,14 @@ class MainActivity : AppCompatActivity() {
     private fun initOnnxModel() {
         try {
             ortEnv = OrtEnvironment.getEnvironment()
-            val modelBytes = assets.open("models/face_detection_short_range.onnx").use { it.readBytes() }
+            // LOAD THE 478-POINT LANDMARKER MODEL
+            val modelBytes = assets.open("models/face_landmarker_Nx3x256x256.onnx").use { it.readBytes() }
             ortSession = ortEnv.createSession(modelBytes, OrtSession.SessionOptions())
-            faceDetector = FaceDetector(ortEnv, ortSession)
-            tvModelInfo.text = "✅ AI Model Loaded!\nBlazeFace short-range ready.\nSelect video + bindi, then Process."
+            faceLandmarker = FaceLandmarker(ortEnv, ortSession)
+            tvModelInfo.text = "✅ 478-Point Landmarker Loaded!\n3D Bindi engine ready.\nUpload a video and Process."
         } catch (e: Exception) {
-            Log.e("ShagunAI_ONNX", "Failed to load ONNX model", e)
-            tvModelInfo.text = "❌ Failed to load model: ${e.message}"
+            Log.e("ShagunAI", "Failed to load model", e)
+            tvModelInfo.text = "❌ Failed: ${e.message}"
         }
-    }
-
-    private fun showBindiGrid() {
-        val files = assets.list("bindi")?.filter { it.endsWith(".png") }?.sorted() ?: return
-        val dialog = Dialog(this)
-        dialog.setTitle("Choose Bindi")
-        val grid = GridView(this)
-        grid.numColumns = 4
-        grid.verticalSpacing = 20
-        grid.horizontalSpacing = 20
-        grid.stretchMode = GridView.STRETCH_COLUMN_WIDTH
-        grid.setPadding(20, 20, 20, 20)
-        grid.adapter = object : BaseAdapter() {
-            override fun getCount() = files.size
-            override fun getItem(position: Int) = files[position]
-            override fun getItemId(position: Int) = position.toLong()
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val image = (convertView as? ImageView) ?: ImageView(this@MainActivity)
-                image.layoutParams = AbsListView.LayoutParams(170, 170)
-                image.scaleType = ImageView.ScaleType.FIT_CENTER
-                assets.open("bindi/${files[position]}").use { input ->
-                    image.setImageBitmap(BitmapFactory.decodeStream(input))
-                }
-                return image
-            }
-        }
-        grid.setOnItemClickListener { _, _, position, _ ->
-            selectedBindiFileName = files[position]
-            Toast.makeText(this, "Selected: ${files[position]}", Toast.LENGTH_SHORT).show()
-            dialog.dismiss()
-        }
-        dialog.setContentView(grid)
-        dialog.show()
     }
 }
