@@ -21,8 +21,7 @@ import java.nio.ByteBuffer
 class VideoProcessor(
     private val context: Context,
     private val videoUri: Uri,
-    private val bindi: Bitmap,
-    private val detector: FaceDetector,
+    private val landmarker: FaceLandmarker,
     private val onProgress: (Int, Int) -> Unit,
     private val onResult: (Uri?, String?) -> Unit
 ) {
@@ -97,7 +96,10 @@ class VideoProcessor(
                 val raw = retriever.getFrameAtTime(tUs, MediaMetadataRetriever.OPTION_CLOSEST) ?: continue
                 val oriented = if (rotation != 0) Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, matrix, true) else raw
                 val sized = if (oriented.width != w || oriented.height != h) Bitmap.createScaledBitmap(oriented, w, h, true) else oriented
-                val rendered = BindiRenderer.render(sized, bindi, detector) ?: sized
+                
+                // Run 478-point detection and draw 3D bindi
+                val points = landmarker.detect(sized)
+                val rendered = BindiRenderer.render(sized, points) ?: sized
 
                 if (feedFrame(encoder, muxer, rendered, tUs)) framesProcessed++
                 mainHandler.post { onProgress(i + 1, totalFrames) }
@@ -153,11 +155,10 @@ class VideoProcessor(
     private fun findSupportedColorFormat(info: MediaCodecInfo): Int? {
         val caps = info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
         val formats = caps.colorFormats
-        // Prefer SemiPlanar (NV12/NV21) as it's most common on mobile
         val preferred = listOf(
-            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar, // 21
-            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar,     // 19
-            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420PackedSemiPlanar // 39
+            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420SemiPlanar,
+            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Planar,
+            MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420PackedSemiPlanar
         )
         for (fmt in preferred) { if (formats.contains(fmt)) return fmt }
         return formats.firstOrNull()
@@ -189,8 +190,6 @@ class VideoProcessor(
         }
     }
 
-    // FIXED: Correctly handles both Planar (I420) and SemiPlanar (NV12/NV21) formats
-    // and uses full 0-255 range to prevent color loss.
     private fun bitmapToYuvBuffer(bmp: Bitmap, outBuffer: ByteBuffer) {
         val w = bmp.width
         val h = bmp.height
@@ -203,7 +202,6 @@ class VideoProcessor(
         outBuffer.clear()
         outBuffer.limit(ySize + 2 * uvSize)
 
-        // Y plane (full range 0-255)
         for (i in pixels) {
             val r = (i shr 16) and 0xFF
             val g = (i shr 8) and 0xFF
@@ -216,7 +214,6 @@ class VideoProcessor(
                             selectedColorFormat == MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420PackedSemiPlanar)
 
         if (isSemiPlanar) {
-            // NV12/NV21: Interleaved U and V
             for (row in 0 until h step 2) {
                 for (col in 0 until w step 2) {
                     val idx = row * w + col
@@ -225,13 +222,11 @@ class VideoProcessor(
                     val b = pixels[idx] and 0xFF
                     val u = (-0.169 * r - 0.331 * g + 0.500 * b + 128).toInt()
                     val v = (0.500 * r - 0.419 * g - 0.081 * b + 128).toInt()
-                    // NV12 order: U then V. NV21 is V then U. Most Android encoders want NV12 for format 21.
                     outBuffer.put(u.coerceIn(0, 255).toByte())
                     outBuffer.put(v.coerceIn(0, 255).toByte())
                 }
             }
         } else {
-            // Planar (I420): All U then all V
             for (row in 0 until h step 2) {
                 for (col in 0 until w step 2) {
                     val idx = row * w + col
